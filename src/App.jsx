@@ -6,11 +6,11 @@ export default function App() {
   const [centers, setCenters] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isLive, setIsLive] = useState(false);
-  const [checkIns, setCheckIns] = useState({});
+  const [activeCheckIn, setActiveCheckIn] = useState(null); // { centerId, timestamp }
 
   useEffect(() => {
     fetchCenters();
-    loadLocalCheckIns();
+    loadActiveCheckIn();
 
     const channel = supabase
       .channel('realtime_print_centers')
@@ -42,30 +42,33 @@ export default function App() {
     setLoading(false);
   };
 
-  const loadLocalCheckIns = () => {
-    const saved = {};
-    for (let i = 1; i <= 3; i++) {
-      const ts = localStorage.getItem(`checkin_center_${i}`);
-      if (ts) saved[i] = parseInt(ts, 10);
-    }
-    setCheckIns(saved);
-  };
+  const loadActiveCheckIn = () => {
+    const raw = localStorage.getItem('printrush_active_queue');
+    if (!raw) return;
 
-  const isUserCheckedIn = (centerId) => {
-    const timestamp = checkIns[centerId];
-    if (!timestamp) return false;
-    const diffMinutes = (Date.now() - timestamp) / 60000;
-    return diffMinutes < 15;
+    try {
+      const parsed = JSON.parse(raw);
+      const diffMinutes = (Date.now() - parsed.timestamp) / 60000;
+      if (diffMinutes < 15) {
+        setActiveCheckIn(parsed);
+      } else {
+        localStorage.removeItem('printrush_active_queue');
+        setActiveCheckIn(null);
+      }
+    } catch {
+      localStorage.removeItem('printrush_active_queue');
+    }
   };
 
   const handleJoinQueue = async (center) => {
-    if (isUserCheckedIn(center.id)) return;
+    // Accountability rule: Cannot join multiple queues simultaneously
+    if (activeCheckIn) return;
 
     const newCount = center.queue_count + 1;
-    const now = Date.now();
+    const checkInData = { centerId: center.id, timestamp: Date.now() };
 
-    localStorage.setItem(`checkin_center_${center.id}`, now.toString());
-    setCheckIns((prev) => ({ ...prev, [center.id]: now }));
+    localStorage.setItem('printrush_active_queue', JSON.stringify(checkInData));
+    setActiveCheckIn(checkInData);
 
     setCenters((prev) =>
       prev.map((c) => (c.id === center.id ? { ...c, queue_count: newCount } : c))
@@ -80,12 +83,11 @@ export default function App() {
   const handleLeaveQueue = async (center) => {
     const newCount = Math.max(0, center.queue_count - 1);
 
-    localStorage.removeItem(`checkin_center_${center.id}`);
-    setCheckIns((prev) => {
-      const copy = { ...prev };
-      delete copy[center.id];
-      return copy;
-    });
+    // If leaving the currently checked-in center, release lock
+    if (activeCheckIn?.centerId === center.id) {
+      localStorage.removeItem('printrush_active_queue');
+      setActiveCheckIn(null);
+    }
 
     setCenters((prev) =>
       prev.map((c) => (c.id === center.id ? { ...c, queue_count: newCount } : c))
@@ -98,6 +100,11 @@ export default function App() {
   };
 
   const handleResetQueue = async (center) => {
+    if (activeCheckIn?.centerId === center.id) {
+      localStorage.removeItem('printrush_active_queue');
+      setActiveCheckIn(null);
+    }
+
     setCenters((prev) =>
       prev.map((c) => (c.id === center.id ? { ...c, queue_count: 0 } : c))
     );
@@ -121,10 +128,10 @@ export default function App() {
       .eq('id', center.id);
   };
 
-  // Find the single fastest shop for instant sub-3s decision
-  const availableCenters = centers.filter((c) => !c.is_jammed);
-  const bestCenterId = availableCenters.length > 0 
-    ? availableCenters.reduce((prev, curr) => (prev.queue_count <= curr.queue_count ? prev : curr)).id 
+  // Fastest operational center for instant sub-3s decision
+  const operationalCenters = centers.filter((c) => !c.is_jammed);
+  const bestCenterId = operationalCenters.length > 0
+    ? operationalCenters.reduce((prev, curr) => (prev.queue_count <= curr.queue_count ? prev : curr)).id
     : null;
 
   return (
@@ -141,7 +148,6 @@ export default function App() {
               <h1 className="text-xl font-bold tracking-tight text-white">
                 PrintRush
               </h1>
-              {/* 2-3 Word Constraint Badge */}
               <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-amber-400/10 text-amber-300 border border-amber-400/30">
                 ⏱️ &lt;10s Pick
               </span>
@@ -157,7 +163,7 @@ export default function App() {
           </p>
         </header>
 
-        {/* Status Cards Feed */}
+        {/* Center Cards Feed */}
         {loading ? (
           <div className="space-y-3">
             {[1, 2, 3].map((i) => (
@@ -171,7 +177,8 @@ export default function App() {
               const isLowPaper = !center.is_paper_stocked;
               const estWaitMins = Math.ceil(center.queue_count * 1.5);
               const isBest = center.id === bestCenterId && !isJam;
-              const checkedIn = isUserCheckedIn(center.id);
+              const isCurrentChecked = activeCheckIn?.centerId === center.id;
+              const isInOtherQueue = activeCheckIn && !isCurrentChecked;
 
               return (
                 <section
@@ -184,7 +191,6 @@ export default function App() {
                       : 'bg-slate-900/70 border-slate-800/80 hover:border-slate-700'
                   }`}
                 >
-                  {/* Immediate 2-second decision callout */}
                   {isBest && (
                     <div className="inline-flex items-center gap-1 mb-2 px-2 py-0.5 rounded text-[10px] font-bold tracking-wide uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                       <Zap className="w-3 h-3 fill-emerald-300" />
@@ -197,7 +203,6 @@ export default function App() {
                       <h2 className="text-[15px] font-bold text-white tracking-tight">
                         {center.name}
                       </h2>
-                      {/* High-contrast location font */}
                       <p className="text-xs text-slate-200 font-medium flex items-center gap-1 mt-1">
                         <MapPin className="w-3 h-3 text-amber-400" />
                         <span>{center.location}</span>
@@ -254,12 +259,20 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* Queue Control Buttons */}
+                  {/* Single-Queue Accountable Actions */}
                   <div className="mt-3.5 pt-3 border-t border-slate-800/80 flex gap-2">
-                    {checkedIn ? (
+                    {isCurrentChecked ? (
                       <div className="flex-1 bg-amber-400/10 border border-amber-400/30 text-amber-300 font-semibold py-2 rounded-lg text-xs text-center">
                         ✓ In Line (Active 15m)
                       </div>
+                    ) : isInOtherQueue ? (
+                      <button
+                        disabled
+                        title="Leave your current queue first to join this one"
+                        className="flex-1 bg-slate-800/40 text-slate-500 font-medium py-2 rounded-lg text-xs border border-slate-800 cursor-not-allowed opacity-60"
+                      >
+                        In Another Queue
+                      </button>
                     ) : (
                       <button
                         onClick={() => handleJoinQueue(center)}
@@ -282,10 +295,10 @@ export default function App() {
           </main>
         )}
 
-        {/* Sub-10s Evidence Footer */}
+        {/* Footer */}
         <footer className="pt-3 border-t border-slate-800/80 flex justify-between items-center text-[11px] text-slate-400">
           <span>Constraint #5: &lt;10s Utility</span>
-          <span>Zero Authentication</span>
+          <span>1 Queue / Device Lock</span>
         </footer>
 
       </div>

@@ -81,13 +81,13 @@ export default function App() {
   };
 
   const handleLeaveQueue = async (center) => {
+    // Accountability guard: strictly block decrementing unless checked into THIS center
+    if (activeCheckIn?.centerId !== center.id) return;
+
     const newCount = Math.max(0, center.queue_count - 1);
 
-    // If leaving the currently checked-in center, release lock
-    if (activeCheckIn?.centerId === center.id) {
-      localStorage.removeItem('printrush_active_queue');
-      setActiveCheckIn(null);
-    }
+    localStorage.removeItem('printrush_active_queue');
+    setActiveCheckIn(null);
 
     setCenters((prev) =>
       prev.map((c) => (c.id === center.id ? { ...c, queue_count: newCount } : c))
@@ -259,35 +259,40 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* Single-Queue Accountable Actions */}
-                  <div className="mt-3.5 pt-3 border-t border-slate-800/80 flex gap-2">
+                  {/* Accountable Actions */}
+                  <div className="mt-3.5 pt-3 border-t border-slate-800/80">
                     {isCurrentChecked ? (
-                      <div className="flex-1 bg-amber-400/10 border border-amber-400/30 text-amber-300 font-semibold py-2 rounded-lg text-xs text-center">
-                        ✓ In Line (Active 15m)
+                      /* Checked in here: Show status + active Leave button */
+                      <div className="flex gap-2">
+                        <div className="flex-1 bg-amber-400/10 border border-amber-400/30 text-amber-300 font-semibold py-2 rounded-lg text-xs flex items-center justify-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                          <span>In Line (Active 15m)</span>
+                        </div>
+                        <button
+                          onClick={() => handleLeaveQueue(center)}
+                          className="flex-1 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 font-bold py-2 rounded-lg text-xs transition active:scale-95 cursor-pointer"
+                        >
+                          Done / Left Queue
+                        </button>
                       </div>
                     ) : isInOtherQueue ? (
+                      /* Checked in elsewhere: Disabled */
                       <button
                         disabled
-                        title="Leave your current queue first to join this one"
-                        className="flex-1 bg-slate-800/40 text-slate-500 font-medium py-2 rounded-lg text-xs border border-slate-800 cursor-not-allowed opacity-60"
+                        title="Leave your active queue first to join this one"
+                        className="w-full bg-slate-800/40 text-slate-500 font-medium py-2 rounded-lg text-xs border border-slate-800/60 cursor-not-allowed opacity-60"
                       >
                         In Another Queue
                       </button>
                     ) : (
+                      /* Not in any line: Full-width Join button */
                       <button
                         onClick={() => handleJoinQueue(center)}
-                        className="flex-1 bg-amber-400 hover:bg-amber-300 active:bg-amber-500 text-slate-950 font-bold py-2 rounded-lg text-xs transition active:scale-95 cursor-pointer shadow"
+                        className="w-full bg-amber-400 hover:bg-amber-300 active:bg-amber-500 text-slate-950 font-bold py-2 rounded-lg text-xs transition active:scale-95 cursor-pointer shadow"
                       >
                         + I'm in line
                       </button>
                     )}
-
-                    <button
-                      onClick={() => handleLeaveQueue(center)}
-                      className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold py-2 rounded-lg text-xs transition active:scale-95 cursor-pointer border border-slate-700"
-                    >
-                      Done / Left
-                    </button>
                   </div>
                 </section>
               );
@@ -298,7 +303,7 @@ export default function App() {
         {/* Footer */}
         <footer className="pt-3 border-t border-slate-800/80 flex justify-between items-center text-[11px] text-slate-400">
           <span>Constraint #5: &lt;10s Utility</span>
-          <span>1 Queue / Device Lock</span>
+          <span>Verified Check-in Lock</span>
         </footer>
 
       </div>
